@@ -1,0 +1,52 @@
+# TV Lock for Chromecast with Google TV
+
+Shows a full-screen PIN pad when the Chromecast boots and every time it wakes
+from standby. Navigate the keypad with the remote's D-pad. Back is blocked;
+three wrong PINs trigger a 30-second lockout that grows with each extra miss.
+
+## 1. Build the APK
+**From GitHub (no local setup):** every push runs the *Build APK* workflow.
+Open the run under the **Actions** tab and download the `tvlock-debug-apk`
+artifact. Pushing a tag like `v1.0` also attaches the APK to a GitHub Release.
+
+**Locally:** with JDK 17 and the Android SDK installed (or Android Studio):
+```
+./gradlew assembleDebug
+```
+The APK lands in `app/build/outputs/apk/debug/app-debug.apk`.
+
+## 2. Enable ADB on the Chromecast
+1. Settings > System > About > click **Android TV OS build** 7 times.
+2. Settings > System > Developer options > turn on **USB debugging**.
+3. Find the Chromecast's IP (Settings > Network & Internet > your network).
+4. On your computer: `adb connect <chromecast-ip>:5555`, then approve the
+   prompt on the TV. Tick **Always allow from this computer**.
+
+## 3. Install and grant permission
+```
+adb install app/build/outputs/apk/debug/app-debug.apk
+adb shell appops set com.example.tvlock SYSTEM_ALERT_WINDOW allow
+```
+Google TV hides the "Display over other apps" screen, so the `appops` command
+is the only way to grant the overlay permission.
+
+## 4. Set your PIN
+Open **TV Lock** from Apps on the Chromecast, set a PIN, then press
+**Lock now** to test. Also test by turning the TV off and on.
+
+## Forgot the PIN?
+From your already-authorised computer:
+```
+adb shell pm clear com.example.tvlock    # wipes the PIN
+# or
+adb uninstall com.example.tvlock
+```
+Leave USB debugging on so this recovery path stays available. Without it,
+the only fallback is a factory reset.
+
+## Limitations
+- It's a deterrent, not a security boundary.
+- For a few seconds after a cold boot, before Android delivers BOOT_COMPLETED,
+  the home screen is usable.
+- Anyone with ADB access to your network and an authorised computer can remove it.
+- Changing the PIN requires the current PIN.
