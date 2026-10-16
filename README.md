@@ -1,8 +1,28 @@
 # TV Lock for Chromecast with Google TV
 
 Shows a full-screen PIN pad when the Chromecast boots and every time it wakes
-from standby. Navigate the keypad with the remote's D-pad. Back is blocked;
+from standby. The PIN is entered "blind" with the remote's D-pad, so nobody
+watching the screen can tell which digits you press. Back is blocked;
 three wrong PINs trigger a 30-second lockout that grows with each extra miss.
+
+## Entering the PIN
+The keypad on screen is only a reference and never highlights anything:
+```
+ 1  2  3
+ 4  5  6
+ 7  8  9
+ ⌫  0  OK
+```
+- A hidden cursor starts on the **top row** (`1 2 3`).
+- **Up / Down** move it to another row (it wraps, so one **Up** reaches `⌫ 0 OK`).
+- **Left / Center / Right** press the left, middle or right key of that row.
+  The cursor then jumps back to the top row.
+
+Examples: `1` = Left · `5` = Down, Center · `9` = Down, Down, Right ·
+`0` = Up, Center · confirm = Up, Right · delete last digit = Up, Left.
+
+Only the number of dots changes on screen. A remote with number keys can
+also type digits directly.
 
 ## 1. Build the APK
 **From GitHub (no local setup):** every push runs the *Build APK* workflow.
@@ -25,10 +45,13 @@ The APK lands in `app/build/outputs/apk/debug/app-debug.apk`.
 ## 3. Install and grant permission
 ```
 adb install app/build/outputs/apk/debug/app-debug.apk
-adb shell appops set com.example.tvlock SYSTEM_ALERT_WINDOW allow
+adb shell appops set com.lukavia.tvlock SYSTEM_ALERT_WINDOW allow
 ```
 Google TV hides the "Display over other apps" screen, so the `appops` command
 is the only way to grant the overlay permission.
+
+> Upgrading from a build with the old `com.example.tvlock` package? It is a
+> different app to Android, so remove it first: `adb uninstall com.example.tvlock`
 
 ## 4. Set your PIN
 Open **TV Lock** from Apps on the Chromecast, set a PIN, then press
@@ -37,9 +60,9 @@ Open **TV Lock** from Apps on the Chromecast, set a PIN, then press
 ## Forgot the PIN?
 From your already-authorised computer:
 ```
-adb shell pm clear com.example.tvlock    # wipes the PIN
+adb shell pm clear com.lukavia.tvlock    # wipes the PIN
 # or
-adb uninstall com.example.tvlock
+adb uninstall com.lukavia.tvlock
 ```
 Leave USB debugging on so this recovery path stays available. Without it,
 the only fallback is a factory reset.

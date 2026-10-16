@@ -1,10 +1,8 @@
-package com.example.tvlock;
+package com.lukavia.tvlock;
 
 import android.content.Context;
-import android.content.res.ColorStateList;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.StateListDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -13,16 +11,32 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
-import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-/** Full-screen PIN pad drawn over everything, navigable with the D-pad remote. */
+/**
+ * Full-screen PIN pad drawn over everything, operated "blind" with the D-pad.
+ *
+ * The keypad on screen is a static legend and never highlights anything:
+ * Up/Down move a hidden row cursor (wrapping), Left/Center/Right press the
+ * key in that column of the current row, then the cursor silently returns
+ * to the top row. Someone watching the screen only sees the dot count grow.
+ * The remote's number keys also work directly.
+ */
 final class LockOverlay {
     private static final int MAX_DIGITS = 8;
     private static final long LOCKOUT_STEP_MS = 30_000L;
+    private static final String BACKSPACE = "⌫";
+    private static final String OK = "OK";
+
+    private static final String[][] KEYS = {
+            {"1", "2", "3"},
+            {"4", "5", "6"},
+            {"7", "8", "9"},
+            {BACKSPACE, "0", OK},
+    };
 
     private final Context ctx;
     private final WindowManager wm;
@@ -32,8 +46,8 @@ final class LockOverlay {
     private View root;
     private TextView dots;
     private TextView msg;
-    private Button firstKey;
 
+    private int row = 0;
     private int failures = 0;
     private long lockedUntil = 0;
 
@@ -46,8 +60,7 @@ final class LockOverlay {
 
     void show() {
         if (root != null) {
-            entry.setLength(0);
-            updateDots();
+            resetEntry();
             return;
         }
         root = buildView();
@@ -63,10 +76,9 @@ final class LockOverlay {
             root = null;
             return;
         }
-        entry.setLength(0);
-        updateDots();
+        resetEntry();
         tick();
-        root.post(() -> { if (firstKey != null) firstKey.requestFocus(); });
+        root.post(() -> { if (root != null) root.requestFocus(); });
     }
 
     void hide() {
@@ -77,8 +89,8 @@ final class LockOverlay {
         root = null;
         dots = null;
         msg = null;
-        firstKey = null;
         entry.setLength(0);
+        row = 0;
     }
 
     private View buildView() {
@@ -87,19 +99,16 @@ final class LockOverlay {
         FrameLayout frame = new FrameLayout(ctx) {
             @Override
             public boolean dispatchKeyEvent(KeyEvent e) {
-                int k = e.getKeyCode();
-                if (k == KeyEvent.KEYCODE_BACK || k == KeyEvent.KEYCODE_ESCAPE) {
-                    return true; // swallow Back so the lock can't be dismissed
+                // Consume every key so nothing reaches the app underneath
+                // and no view inside the overlay ever shows focus.
+                if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
+                    onKeyDown(e.getKeyCode());
                 }
-                if (k >= KeyEvent.KEYCODE_0 && k <= KeyEvent.KEYCODE_9) {
-                    if (e.getAction() == KeyEvent.ACTION_DOWN) {
-                        onDigit((char) ('0' + (k - KeyEvent.KEYCODE_0)));
-                    }
-                    return true;
-                }
-                return super.dispatchKeyEvent(e);
+                return true;
             }
         };
+        frame.setFocusable(true);
+        frame.setFocusableInTouchMode(true);
         frame.setBackgroundColor(0xFF000000);
 
         LinearLayout col = new LinearLayout(ctx);
@@ -109,27 +118,32 @@ final class LockOverlay {
         TextView title = text("TV locked", 34, 0xFFFFFFFF);
         dots = text("", 40, 0xFFFFFFFF);
         dots.setMinHeight((int) (56 * d));
-        msg = text("Enter PIN", 18, 0xFFBBBBBB);
+        msg = text("", 18, 0xFFBBBBBB);
         msg.setPadding(0, 0, 0, (int) (24 * d));
 
         GridLayout grid = new GridLayout(ctx);
         grid.setColumnCount(3);
-        String[] keys = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "OK"};
         int m = (int) (6 * d);
-        for (String key : keys) {
-            Button b = makeKey(key, d);
-            GridLayout.LayoutParams p = new GridLayout.LayoutParams();
-            p.width = (int) (96 * d);
-            p.height = (int) (64 * d);
-            p.setMargins(m, m, m, m);
-            grid.addView(b, p);
-            if (firstKey == null) firstKey = b;
+        for (String[] keyRow : KEYS) {
+            for (String key : keyRow) {
+                TextView k = text(key, 24, 0xFFFFFFFF);
+                k.setBackground(rounded(0xFF333333, d));
+                GridLayout.LayoutParams p = new GridLayout.LayoutParams();
+                p.width = (int) (96 * d);
+                p.height = (int) (64 * d);
+                p.setMargins(m, m, m, m);
+                grid.addView(k, p);
+            }
         }
+
+        TextView help = text("▲ ▼  choose row      ◀  ●  ▶  choose key", 16, 0xFF888888);
+        help.setPadding(0, (int) (24 * d), 0, 0);
 
         col.addView(title);
         col.addView(dots);
         col.addView(msg);
         col.addView(grid);
+        col.addView(help);
         frame.addView(col, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -143,27 +157,8 @@ final class LockOverlay {
         t.setTextSize(sp);
         t.setTextColor(color);
         t.setGravity(Gravity.CENTER);
+        t.setFocusable(false);
         return t;
-    }
-
-    private Button makeKey(String label, float d) {
-        Button b = new Button(ctx);
-        b.setText(label);
-        b.setTextSize(24);
-        b.setAllCaps(false);
-        b.setStateListAnimator(null);
-        b.setFocusable(true);
-
-        StateListDrawable bg = new StateListDrawable();
-        bg.addState(new int[]{android.R.attr.state_focused}, rounded(0xFFFFFFFF, d));
-        bg.addState(new int[]{}, rounded(0xFF333333, d));
-        b.setBackground(bg);
-        b.setTextColor(new ColorStateList(
-                new int[][]{{android.R.attr.state_focused}, {}},
-                new int[]{0xFF000000, 0xFFFFFFFF}));
-
-        b.setOnClickListener(v -> onKey(label));
-        return b;
     }
 
     private static GradientDrawable rounded(int color, float d) {
@@ -173,21 +168,53 @@ final class LockOverlay {
         return g;
     }
 
-    private void onKey(String label) {
-        switch (label) {
-            case "⌫":
+    private void onKeyDown(int k) {
+        if (k >= KeyEvent.KEYCODE_0 && k <= KeyEvent.KEYCODE_9) {
+            onDigit((char) ('0' + (k - KeyEvent.KEYCODE_0)));
+            return;
+        }
+        switch (k) {
+            case KeyEvent.KEYCODE_DPAD_UP:
+                row = (row + KEYS.length - 1) % KEYS.length;
+                break;
+            case KeyEvent.KEYCODE_DPAD_DOWN:
+                row = (row + 1) % KEYS.length;
+                break;
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+                press(0);
+                break;
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_ENTER:
+            case KeyEvent.KEYCODE_NUMPAD_ENTER:
+                press(1);
+                break;
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+                press(2);
+                break;
+            default:
+                // Back, Home, etc. are swallowed so the lock can't be dismissed.
+                break;
+        }
+    }
+
+    private void press(int column) {
+        String key = KEYS[row][column];
+        row = 0;
+        switch (key) {
+            case BACKSPACE:
                 if (entry.length() > 0) entry.setLength(entry.length() - 1);
                 updateDots();
                 break;
-            case "OK":
+            case OK:
                 submit();
                 break;
             default:
-                onDigit(label.charAt(0));
+                onDigit(key.charAt(0));
         }
     }
 
     private void onDigit(char c) {
+        row = 0;
         if (isLockedOut() || entry.length() >= MAX_DIGITS) return;
         entry.append(c);
         updateDots();
@@ -201,8 +228,7 @@ final class LockOverlay {
             return;
         }
         failures++;
-        entry.setLength(0);
-        updateDots();
+        resetEntry();
         if (failures >= 3) {
             // 30s after 3 misses, 60s after 4, 90s after 5, ...
             lockedUntil = SystemClock.elapsedRealtime() + LOCKOUT_STEP_MS * (failures - 2);
@@ -210,6 +236,13 @@ final class LockOverlay {
         } else if (msg != null) {
             msg.setText("Wrong PIN");
         }
+    }
+
+    private void resetEntry() {
+        entry.setLength(0);
+        row = 0;
+        updateDots();
+        if (msg != null && !isLockedOut()) msg.setText("Enter PIN");
     }
 
     private boolean isLockedOut() {

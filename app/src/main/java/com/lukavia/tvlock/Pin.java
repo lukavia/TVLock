@@ -1,4 +1,4 @@
-package com.example.tvlock;
+package com.lukavia.tvlock;
 
 import android.content.Context;
 import android.content.SharedPreferences;

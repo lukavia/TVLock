@@ -1,4 +1,4 @@
-package com.example.tvlock;
+package com.lukavia.tvlock;
 
 import android.app.Activity;
 import android.content.Intent;
