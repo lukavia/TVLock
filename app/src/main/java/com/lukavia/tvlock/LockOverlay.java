@@ -102,7 +102,7 @@ final class LockOverlay {
                 // Consume every key so nothing reaches the app underneath
                 // and no view inside the overlay ever shows focus.
                 if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0) {
-                    onKeyDown(e.getKeyCode());
+                    handleKey(e.getKeyCode());
                 }
                 return true;
             }
@@ -168,7 +168,7 @@ final class LockOverlay {
         return g;
     }
 
-    private void onKeyDown(int k) {
+    private void handleKey(int k) {
         if (k >= KeyEvent.KEYCODE_0 && k <= KeyEvent.KEYCODE_9) {
             onDigit((char) ('0' + (k - KeyEvent.KEYCODE_0)));
             return;
