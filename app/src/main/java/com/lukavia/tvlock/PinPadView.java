@@ -12,8 +12,8 @@ import android.widget.TextView;
  * PIN pad operated "blind" with the D-pad.
  *
  * Up/Down move a row cursor (wrapping); the whole current row is highlighted.
- * Left/Center/Right press the key in that column of the current row, and the
- * cursor returns to the top row. No individual key is ever highlighted, so
+ * Left/Center/Right press the key in that column of the current row; the
+ * cursor stays on that row. No individual key is ever highlighted, so
  * someone watching the screen sees the row but not which of its keys you chose.
  * The remote's number keys also work directly.
  *
@@ -109,8 +109,6 @@ final class PinPadView extends LinearLayout {
         if (e.getAction() != KeyEvent.ACTION_DOWN || e.getRepeatCount() > 0) return true;
 
         if (k >= KeyEvent.KEYCODE_0 && k <= KeyEvent.KEYCODE_9) {
-            row = 0;
-            updateRow();
             digit((char) ('0' + (k - KeyEvent.KEYCODE_0)));
             return true;
         }
@@ -149,8 +147,6 @@ final class PinPadView extends LinearLayout {
 
     private void press(int column) {
         String key = KEYS[row][column];
-        row = 0;
-        updateRow();
         switch (key) {
             case BACKSPACE:
                 if (inputEnabled && entry.length() > 0) entry.setLength(entry.length() - 1);

@@ -16,10 +16,10 @@ The current row is highlighted, but never the individual key you press:
 - The cursor starts on the **top row** (`1 2 3`).
 - **Up / Down** move it to another row (it wraps, so one **Up** reaches `⌫ 0 OK`).
 - **Left / Center / Right** press the left, middle or right key of that row.
-  The cursor then jumps back to the top row.
+  The cursor stays on that row until you move it.
 
-Examples: `1` = Left · `5` = Down, Center · `9` = Down, Down, Right ·
-`0` = Up, Center · confirm = Up, Right · delete last digit = Up, Left.
+Example, starting on the top row: `1590` = Left · Down, Center ·
+Down, Right · Down, Center · then OK = Right.
 
 Someone watching sees which row you're on, but not which of its three keys
 you pressed. A remote with number keys can
