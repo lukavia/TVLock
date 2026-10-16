@@ -1,32 +1,46 @@
 package com.lukavia.tvlock;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
+import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
+import android.text.InputType;
 import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.WriterException;
+import com.google.zxing.common.BitMatrix;
+import com.google.zxing.qrcode.QRCodeWriter;
+
 /**
- * Launcher screen: check permissions, lock now, or set/change the PIN.
- * PINs are entered with the same blind D-pad pad as the lock screen.
+ * Launcher screen: check permissions, lock now, set/change the PIN, and
+ * configure phone unlock. PINs are entered with the same blind D-pad pad as
+ * the lock screen. The phone unlock screen reveals the ntfy topic, so it is
+ * only shown after the PIN has been entered.
  */
 public class SetupActivity extends Activity {
-    private enum Step { CURRENT, NEW, CONFIRM }
+    private enum Step { CURRENT, NEW, CONFIRM, VERIFY_FOR_PHONE }
 
     private View menu;
     private TextView status;
     private Button setPin;
+    private Button phoneButton;
 
     private PinPadView pad;
     private Step step;
     private String newPin;
+    private boolean onPhoneScreen;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -39,11 +53,17 @@ public class SetupActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        refresh();
+        if (pad == null && !onPhoneScreen) refresh();
     }
 
+    private int dp(float v) {
+        return (int) (v * getResources().getDisplayMetrics().density);
+    }
+
+    // --- menu -----------------------------------------------------------
+
     private View buildMenu() {
-        int pad = (int) (48 * getResources().getDisplayMetrics().density);
+        int pad = dp(48);
 
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
@@ -59,7 +79,17 @@ public class SetupActivity extends Activity {
         status.setPadding(0, pad / 4, 0, pad / 4);
 
         setPin = new Button(this);
-        setPin.setOnClickListener(v -> startPinFlow());
+        setPin.setOnClickListener(v -> startPinFlow(Pin.isSet(this) ? Step.CURRENT : Step.NEW));
+
+        phoneButton = new Button(this);
+        phoneButton.setText("Phone unlock");
+        phoneButton.setOnClickListener(v -> {
+            if (!Pin.isSet(this)) {
+                Toast.makeText(this, "Set a PIN first", Toast.LENGTH_SHORT).show();
+            } else {
+                startPinFlow(Step.VERIFY_FOR_PHONE);
+            }
+        });
 
         Button lockNow = new Button(this);
         lockNow.setText("Lock now");
@@ -71,6 +101,7 @@ public class SetupActivity extends Activity {
         col.addView(title);
         col.addView(status);
         col.addView(setPin);
+        col.addView(phoneButton);
         col.addView(lockNow);
 
         ScrollView scroll = new ScrollView(this);
@@ -81,6 +112,7 @@ public class SetupActivity extends Activity {
     private void showMenu() {
         pad = null;
         newPin = null;
+        onPhoneScreen = false;
         setContentView(menu);
         refresh();
         setPin.requestFocus();
@@ -95,27 +127,30 @@ public class SetupActivity extends Activity {
         s.append(overlayOk ? "✓ Overlay permission granted\n"
                 : "✗ Overlay permission missing. From your computer run:\n"
                 + "   adb shell appops set " + getPackageName() + " SYSTEM_ALERT_WINDOW allow\n");
-        s.append(pinSet ? "✓ PIN is set" : "✗ No PIN set yet");
+        s.append(pinSet ? "✓ PIN is set\n" : "✗ No PIN set yet\n");
+        s.append(PhoneUnlock.isEnabled(this) ? "✓ Phone unlock is on" : "– Phone unlock is off");
         if (overlayOk && pinSet) s.append("\n\nThe TV will lock on startup and every time it wakes.");
         status.setText(s.toString());
     }
 
     // --- PIN entry flow -------------------------------------------------
 
-    private void startPinFlow() {
+    private void startPinFlow(Step first) {
+        onPhoneScreen = false;
         pad = new PinPadView(this);
         pad.setListener(this::onPinEntered);
         setContentView(pad);
-        goTo(Pin.isSet(this) ? Step.CURRENT : Step.NEW, null);
+        goTo(first, null);
     }
 
     private void goTo(Step s, String message) {
         step = s;
         pad.clear();
         switch (s) {
-            case CURRENT: pad.setTitle("Enter current PIN"); break;
-            case NEW:     pad.setTitle("Enter new PIN"); break;
-            case CONFIRM: pad.setTitle("Confirm new PIN"); break;
+            case CURRENT:          pad.setTitle("Enter current PIN"); break;
+            case NEW:              pad.setTitle("Enter new PIN"); break;
+            case CONFIRM:          pad.setTitle("Confirm new PIN"); break;
+            case VERIFY_FOR_PHONE: pad.setTitle("Enter PIN"); break;
         }
         pad.setMessage(message != null ? message
                 : s == Step.NEW ? "4–8 digits, then OK.  Back cancels." : "Back cancels.");
@@ -125,6 +160,10 @@ public class SetupActivity extends Activity {
         switch (step) {
             case CURRENT:
                 if (Pin.check(this, pin)) goTo(Step.NEW, null);
+                else pad.setMessage("Wrong PIN");
+                break;
+            case VERIFY_FOR_PHONE:
+                if (Pin.check(this, pin)) showPhoneScreen();
                 else pad.setMessage("Wrong PIN");
                 break;
             case NEW:
@@ -147,14 +186,161 @@ public class SetupActivity extends Activity {
         }
     }
 
+    // --- phone unlock screen --------------------------------------------
+
+    private void showPhoneScreen() {
+        pad = null;
+        onPhoneScreen = true;
+        boolean enabled = PhoneUnlock.isEnabled(this);
+        int gap = dp(32);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER);
+        row.setPadding(gap, gap, gap, gap);
+
+        ImageView qr = new ImageView(this);
+        qr.setImageBitmap(qrBitmap(PhoneUnlock.subscribeUrl(this), dp(240)));
+        qr.setFocusable(false);
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(gap, 0, 0, 0);
+
+        TextView title = new TextView(this);
+        title.setText("Phone unlock: " + (enabled ? "on" : "off"));
+        title.setTextSize(28);
+
+        TextView info = new TextView(this);
+        info.setTextSize(16);
+        info.setPadding(0, dp(12), 0, dp(12));
+        info.setText("1. Install the free ntfy app on your phone (Android or iPhone).\n"
+                + "2. Scan the QR code, or in the app add a subscription with\n"
+                + "     Server: " + PhoneUnlock.server(this) + "\n"
+                + "     Topic:  " + PhoneUnlock.topic(this) + "\n"
+                + (PhoneUnlock.token(this).isEmpty() ? ""
+                        : "     (access token set; log in to the server in the app too)\n")
+                + "3. When the TV locks, your phone gets a notification.\n"
+                + "    Tap Unlock on it to unlock the TV.\n\n"
+                + "Anyone who knows the topic can unlock the TV. If it leaks,\n"
+                + "press New topic and subscribe again.");
+
+        Button toggle = new Button(this);
+        toggle.setText(enabled ? "Turn off" : "Turn on");
+        toggle.setOnClickListener(v -> {
+            PhoneUnlock.setEnabled(this, !enabled);
+            showPhoneScreen();
+        });
+
+        Button newTopic = new Button(this);
+        newTopic.setText("New topic");
+        newTopic.setOnClickListener(v -> {
+            PhoneUnlock.newTopic(this);
+            Toast.makeText(this, "New topic created. Subscribe to it again on your phone.",
+                    Toast.LENGTH_LONG).show();
+            showPhoneScreen();
+        });
+
+        Button back = new Button(this);
+        back.setText("Back");
+        back.setOnClickListener(v -> showMenu());
+
+        Button server = new Button(this);
+        server.setText("Server");
+        server.setOnClickListener(v -> editText("ntfy server", "https://ntfy.example.com",
+                PhoneUnlock.server(this), InputType.TYPE_TEXT_VARIATION_URI, value -> {
+                    PhoneUnlock.setServer(this, value);
+                    showPhoneScreen();
+                }));
+
+        Button token = new Button(this);
+        token.setText("Access token");
+        token.setOnClickListener(v -> editText("Access token (leave empty if none)", "tk_...",
+                PhoneUnlock.token(this), InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD, value -> {
+                    PhoneUnlock.setToken(this, value);
+                    showPhoneScreen();
+                }));
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.addView(toggle);
+        buttons.addView(newTopic);
+        buttons.addView(back);
+
+        Button test = new Button(this);
+        test.setText("Send test");
+        test.setOnClickListener(v -> {
+            Toast.makeText(this, "Sending test to " + PhoneUnlock.server(this) + "…", Toast.LENGTH_SHORT).show();
+            PhoneUnlock.sendTest(this, outcome -> Toast.makeText(this,
+                    "OK".equals(outcome) ? "Sent. Check your phone." : "Failed: " + outcome,
+                    Toast.LENGTH_LONG).show());
+        });
+
+        LinearLayout serverButtons = new LinearLayout(this);
+        serverButtons.setOrientation(LinearLayout.HORIZONTAL);
+        serverButtons.addView(server);
+        serverButtons.addView(token);
+        serverButtons.addView(test);
+
+        col.addView(title);
+        col.addView(info);
+        col.addView(buttons);
+        col.addView(serverButtons);
+        row.addView(qr);
+        row.addView(col);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(row);
+        setContentView(scroll);
+        toggle.requestFocus();
+    }
+
+    private interface TextCallback {
+        void onText(String value);
+    }
+
+    private void editText(String title, String hint, String current, int variation, TextCallback done) {
+        EditText field = new EditText(this);
+        field.setInputType(InputType.TYPE_CLASS_TEXT | variation);
+        field.setHint(hint);
+        field.setText(current);
+        field.setSingleLine(true);
+        field.setSelection(field.getText().length());
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setView(field)
+                .setPositiveButton("Save", (d, w) -> done.onText(field.getText().toString()))
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private static Bitmap qrBitmap(String text, int size) {
+        try {
+            BitMatrix m = new QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, size, size);
+            int[] px = new int[size * size];
+            for (int y = 0; y < size; y++) {
+                for (int x = 0; x < size; x++) {
+                    px[y * size + x] = m.get(x, y) ? 0xFF000000 : 0xFFFFFFFF;
+                }
+            }
+            Bitmap b = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            b.setPixels(px, 0, size, 0, 0, size, size);
+            return b;
+        } catch (WriterException e) {
+            return null;
+        }
+    }
+
+    // --- keys -------------------------------------------------------------
+
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
-        if (pad == null) return super.dispatchKeyEvent(e);
-        if (e.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+        if ((pad != null || onPhoneScreen) && e.getKeyCode() == KeyEvent.KEYCODE_BACK) {
             if (e.getAction() == KeyEvent.ACTION_UP) showMenu();
             return true;
         }
-        return pad.handleKey(e) || super.dispatchKeyEvent(e);
+        if (pad != null) return pad.handleKey(e) || super.dispatchKeyEvent(e);
+        return super.dispatchKeyEvent(e);
     }
 
     private void startLockService(boolean lockNow) {

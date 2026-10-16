@@ -75,6 +75,67 @@ lock screen (see *Entering the PIN* above): current PIN if one is set, then
 the new PIN, then the new PIN again. Back cancels. Then press **Lock now**
 to test. Also test by turning the TV off and on.
 
+## 5. Unlock from your phone (optional)
+Instead of typing the PIN you can unlock with one tap on your phone, using
+the free [ntfy](https://ntfy.sh) push app (Android and iPhone).
+
+1. Install **ntfy** on your phone.
+2. On the TV open **TV Lock > Phone unlock** (asks for the PIN) and press
+   **Turn on**.
+3. Scan the QR code, or add a subscription in the ntfy app using the server
+   and topic shown on screen.
+
+Whenever the lock screen appears while the TV is on, your phone gets a
+"TV Lock" notification with two buttons:
+- **Unlock** unlocks the TV.
+- **Not now** keeps it locked and shows "Not now. Ask again later." on the
+  TV. The notification stays, so you can still tap **Unlock** later.
+
+To send your own message instead (e.g. "No TV until homework is done"),
+open the TV Lock topic in the ntfy app and send a message to it; the TV
+shows it on the lock screen. Messages never unlock the TV.
+
+The PIN keeps working as before, and nothing is sent while the TV is in
+standby.
+
+How it works and what to know:
+- The TV publishes to your private topic and listens on `<topic>-unlock`
+  for a one-time code that changes every time it locks, so an old
+  notification can't unlock it later. It also listens on the topic itself
+  for text messages to display.
+- Anyone who knows the topic name can unlock the TV. It's random and only
+  shown after entering the PIN; if it leaks, press **New topic** and
+  subscribe again.
+- It needs internet access and uses the public ntfy.sh server by default.
+
+### Not getting the notification?
+- On **Phone unlock**, press **Send test**. The TV shows "Sent" or why it
+  failed (server not found, certificate error, HTTP 403 = wrong/missing
+  access token, ...).
+- The lock screen also shows the reason after "Phone unlock:" when it
+  can't send the notification.
+- If the test arrives but lock notifications don't, check the phone is
+  subscribed to the exact topic shown on the TV, on the same server.
+
+### Using your own ntfy server
+On **Phone unlock** press **Server** and enter its address, e.g.
+`https://ntfy.example.com` (HTTPS is required; Android blocks plain HTTP).
+Then subscribe to the topic on your phone using the same server.
+
+If the server has access control (`auth-default-access: deny-all`), create a
+token and press **Access token** to enter it:
+```
+ntfy user add tvlock
+ntfy access tvlock 'tvlock-*' rw
+ntfy token add tvlock
+```
+Log in to the server in the ntfy app on your phone too. The token is also
+included in the notification's Unlock / Not now buttons (they need it to
+post back), so give it access to the `tvlock-*` topics only, as above.
+
+For iPhone notifications from a self-hosted server, the server needs
+`upstream-base-url: "https://ntfy.sh"` in its config.
+
 ## Forgot the PIN?
 From your already-authorised computer:
 ```
@@ -91,3 +152,4 @@ the only fallback is a factory reset.
   the home screen is usable.
 - Anyone with ADB access to your network and an authorised computer can remove it.
 - Changing the PIN requires the current PIN.
+- Phone unlock is only as private as its ntfy topic name.
