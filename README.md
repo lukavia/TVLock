@@ -108,6 +108,15 @@ How it works and what to know:
   subscribe again.
 - It needs internet access and uses the public ntfy.sh server by default.
 
+### Not getting the notification?
+- On **Phone unlock**, press **Send test**. The TV shows "Sent" or why it
+  failed (server not found, certificate error, HTTP 403 = wrong/missing
+  access token, ...).
+- The lock screen also shows the reason after "Phone unlock:" when it
+  can't send the notification.
+- If the test arrives but lock notifications don't, check the phone is
+  subscribed to the exact topic shown on the TV, on the same server.
+
 ### Using your own ntfy server
 On **Phone unlock** press **Server** and enter its address, e.g.
 `https://ntfy.example.com` (HTTPS is required; Android blocks plain HTTP).

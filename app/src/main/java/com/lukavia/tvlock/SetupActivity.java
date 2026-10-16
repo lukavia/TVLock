@@ -267,10 +267,20 @@ public class SetupActivity extends Activity {
         buttons.addView(newTopic);
         buttons.addView(back);
 
+        Button test = new Button(this);
+        test.setText("Send test");
+        test.setOnClickListener(v -> {
+            Toast.makeText(this, "Sending test to " + PhoneUnlock.server(this) + "…", Toast.LENGTH_SHORT).show();
+            PhoneUnlock.sendTest(this, outcome -> Toast.makeText(this,
+                    "OK".equals(outcome) ? "Sent. Check your phone." : "Failed: " + outcome,
+                    Toast.LENGTH_LONG).show());
+        });
+
         LinearLayout serverButtons = new LinearLayout(this);
         serverButtons.setOrientation(LinearLayout.HORIZONTAL);
         serverButtons.addView(server);
         serverButtons.addView(token);
+        serverButtons.addView(test);
 
         col.addView(title);
         col.addView(info);

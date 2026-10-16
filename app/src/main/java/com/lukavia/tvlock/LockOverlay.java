@@ -31,6 +31,8 @@ final class LockOverlay implements PhoneUnlock.Listener {
     private long lockedUntil = 0;
     /** Latest reply from the phone ("Not now" or a custom message), shown under the title. */
     private String phoneNote;
+    /** Why the phone notification couldn't be sent yet, if anything. */
+    private String phoneProblem;
 
     private final Runnable ticker = this::tick;
 
@@ -69,6 +71,7 @@ final class LockOverlay implements PhoneUnlock.Listener {
     void hide() {
         phone.stop();
         phoneNote = null;
+        phoneProblem = null;
         handler.removeCallbacks(ticker);
         if (root != null) {
             try { wm.removeView(root); } catch (Exception ignored) {}
@@ -109,6 +112,7 @@ final class LockOverlay implements PhoneUnlock.Listener {
         } else {
             phone.stop();
             phoneNote = null; // a new request goes out next time the screen turns on
+            phoneProblem = null;
         }
         tick();
     }
@@ -121,6 +125,12 @@ final class LockOverlay implements PhoneUnlock.Listener {
     @Override
     public void onMessage(String text) {
         phoneNote = text;
+        tick();
+    }
+
+    @Override
+    public void onProblem(String problemOrNull) {
+        phoneProblem = problemOrNull;
         tick();
     }
 
@@ -158,6 +168,8 @@ final class LockOverlay implements PhoneUnlock.Listener {
             pad.setInputEnabled(true);
             if (phoneNote != null) {
                 pad.setMessage("From phone: " + phoneNote);
+            } else if (phoneProblem != null) {
+                pad.setMessage("Enter PIN.  (Phone unlock: " + phoneProblem + ")");
             } else {
                 pad.setMessage(phone.isRunning() ? "Enter PIN, or tap Unlock on your phone" : "Enter PIN");
             }

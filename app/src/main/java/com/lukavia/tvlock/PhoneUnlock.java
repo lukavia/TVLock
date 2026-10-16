@@ -54,6 +54,7 @@ final class PhoneUnlock {
     static void setServer(Context c, String server) {
         String s = server.trim();
         while (s.endsWith("/")) s = s.substring(0, s.length() - 1);
+        if (!s.isEmpty() && !s.contains("://")) s = "https://" + s;
         prefs(c).edit().putString("server", s.isEmpty() ? DEFAULT_SERVER : s).apply();
     }
 
@@ -64,6 +65,65 @@ final class PhoneUnlock {
 
     static void setToken(Context c, String token) {
         prefs(c).edit().putString("token", token.trim()).apply();
+    }
+
+    /**
+     * Publishes a plain test notification on a background thread and reports
+     * "OK" or the error on the main thread.
+     */
+    static void sendTest(Context c, java.util.function.Consumer<String> result) {
+        String server = server(c), token = token(c), topic = topic(c);
+        Handler main = new Handler(Looper.getMainLooper());
+        new Thread(() -> {
+            String outcome;
+            try {
+                HttpURLConnection conn = (HttpURLConnection) new URL(server + "/" + topic).openConnection();
+                try {
+                    if (!token.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + token);
+                    conn.setConnectTimeout(15_000);
+                    conn.setReadTimeout(15_000);
+                    conn.setRequestMethod("POST");
+                    conn.setDoOutput(true);
+                    conn.setRequestProperty("Title", "TV Lock test");
+                    try (OutputStream out = conn.getOutputStream()) {
+                        out.write("Test from your TV. Phone unlock can reach the server."
+                                .getBytes(StandardCharsets.UTF_8));
+                    }
+                    checkOk(conn);
+                    outcome = "OK";
+                } finally {
+                    conn.disconnect();
+                }
+            } catch (Exception e) {
+                outcome = describe(e);
+            }
+            String o = outcome;
+            main.post(() -> result.accept(o));
+        }, "tvlock-ntfy-test").start();
+    }
+
+    /** Throws with the HTTP status and ntfy's error text if the response isn't 200. */
+    private static void checkOk(HttpURLConnection c) throws IOException {
+        int code = c.getResponseCode();
+        if (code == 200) return;
+        String body = "";
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(
+                c.getErrorStream() != null ? c.getErrorStream() : c.getInputStream(),
+                StandardCharsets.UTF_8))) {
+            String line = r.readLine();
+            if (line != null) body = new JSONObject(line).optString("error", line);
+        } catch (Exception ignored) {
+        }
+        throw new IOException("HTTP " + code + (body.isEmpty() ? "" : " " + body)
+                + (code == 401 || code == 403 ? " (check the access token)" : ""));
+    }
+
+    static String describe(Exception e) {
+        if (e instanceof java.net.UnknownHostException) return "server not found: " + e.getMessage();
+        if (e instanceof javax.net.ssl.SSLException) return "HTTPS/certificate error: " + e.getMessage();
+        if (e instanceof java.net.MalformedURLException) return "bad server address: " + e.getMessage();
+        String m = e.getMessage();
+        return m != null && !m.isEmpty() ? m : e.getClass().getSimpleName();
     }
 
     /** The topic the phone subscribes to; created on first use. */
@@ -98,6 +158,9 @@ final class PhoneUnlock {
 
         /** "Not now" from the notification, or a free-text message from the phone. */
         void onMessage(String text);
+
+        /** Connection trouble (null once the notification has been sent). */
+        void onProblem(String problemOrNull);
     }
 
     static final String NOT_NOW = "Not now. Ask again later.";
@@ -176,8 +239,11 @@ final class PhoneUnlock {
                     c.setConnectTimeout(15_000);
                     c.setReadTimeout(120_000); // ntfy sends a keepalive every 45s
                     conn = c;
-                    if (c.getResponseCode() != 200) throw new IOException("HTTP " + c.getResponseCode());
-                    if (publishedId == null) publishedId = publish();
+                    checkOk(c);
+                    if (publishedId == null) {
+                        publishedId = publish();
+                        post(() -> listener.onProblem(null));
+                    }
                     BufferedReader r = new BufferedReader(
                             new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8));
                     String line;
@@ -190,6 +256,10 @@ final class PhoneUnlock {
                     backoff = 2_000;
                 } catch (Exception e) {
                     if (cancelled) return;
+                    if (publishedId == null) {
+                        String problem = describe(e);
+                        post(() -> listener.onProblem(problem));
+                    }
                 } finally {
                     HttpURLConnection c = conn;
                     if (c != null) c.disconnect();
@@ -255,7 +325,7 @@ final class PhoneUnlock {
                             + "or send a message to this topic to show it on the TV.")
                             .getBytes(StandardCharsets.UTF_8));
                 }
-                if (c.getResponseCode() != 200) throw new IOException("HTTP " + c.getResponseCode());
+                checkOk(c);
                 try (BufferedReader r = new BufferedReader(
                         new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8))) {
                     return new JSONObject(r.readLine()).optString("id");
