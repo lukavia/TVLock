@@ -4,26 +4,45 @@ import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
 import android.provider.Settings;
-import android.text.InputType;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.widget.Button;
-import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-/** Launcher screen: set or change the PIN, check permissions, lock now. */
+/**
+ * Launcher screen: check permissions, lock now, or set/change the PIN.
+ * PINs are entered with the same blind D-pad pad as the lock screen.
+ */
 public class SetupActivity extends Activity {
+    private enum Step { CURRENT, NEW, CONFIRM }
+
+    private View menu;
     private TextView status;
-    private EditText current;
-    private EditText pin1;
-    private EditText pin2;
+    private Button setPin;
+
+    private PinPadView pad;
+    private Step step;
+    private String newPin;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        menu = buildMenu();
+        showMenu();
+        startLockService(false);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        refresh();
+    }
+
+    private View buildMenu() {
         int pad = (int) (48 * getResources().getDisplayMetrics().density);
 
         LinearLayout col = new LinearLayout(this);
@@ -39,13 +58,8 @@ public class SetupActivity extends Activity {
         status.setTextSize(16);
         status.setPadding(0, pad / 4, 0, pad / 4);
 
-        current = pinField("Current PIN");
-        pin1 = pinField("New PIN (4–8 digits)");
-        pin2 = pinField("Confirm new PIN");
-
-        Button save = new Button(this);
-        save.setText("Save PIN");
-        save.setOnClickListener(v -> savePin());
+        setPin = new Button(this);
+        setPin.setOnClickListener(v -> startPinFlow());
 
         Button lockNow = new Button(this);
         lockNow.setText("Lock now");
@@ -56,37 +70,26 @@ public class SetupActivity extends Activity {
 
         col.addView(title);
         col.addView(status);
-        col.addView(current);
-        col.addView(pin1);
-        col.addView(pin2);
-        col.addView(save);
+        col.addView(setPin);
         col.addView(lockNow);
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(col);
-        setContentView(scroll);
-
-        startLockService(false);
+        return scroll;
     }
 
-    @Override
-    protected void onResume() {
-        super.onResume();
+    private void showMenu() {
+        pad = null;
+        newPin = null;
+        setContentView(menu);
         refresh();
-    }
-
-    private EditText pinField(String hint) {
-        EditText e = new EditText(this);
-        e.setHint(hint);
-        e.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-        e.setEms(12);
-        return e;
+        setPin.requestFocus();
     }
 
     private void refresh() {
         boolean overlayOk = Settings.canDrawOverlays(this);
         boolean pinSet = Pin.isSet(this);
-        current.setVisibility(pinSet ? View.VISIBLE : View.GONE);
+        setPin.setText(pinSet ? "Change PIN" : "Set PIN");
 
         StringBuilder s = new StringBuilder();
         s.append(overlayOk ? "✓ Overlay permission granted\n"
@@ -97,36 +100,66 @@ public class SetupActivity extends Activity {
         status.setText(s.toString());
     }
 
-    private void savePin() {
-        if (Pin.isSet(this) && !Pin.check(this, current.getText().toString())) {
-            toast("Current PIN is wrong");
-            return;
+    // --- PIN entry flow -------------------------------------------------
+
+    private void startPinFlow() {
+        pad = new PinPadView(this);
+        pad.setListener(this::onPinEntered);
+        setContentView(pad);
+        goTo(Pin.isSet(this) ? Step.CURRENT : Step.NEW, null);
+    }
+
+    private void goTo(Step s, String message) {
+        step = s;
+        pad.clear();
+        switch (s) {
+            case CURRENT: pad.setTitle("Enter current PIN"); break;
+            case NEW:     pad.setTitle("Enter new PIN"); break;
+            case CONFIRM: pad.setTitle("Confirm new PIN"); break;
         }
-        String a = pin1.getText().toString();
-        String b = pin2.getText().toString();
-        if (!a.matches("\\d{4,8}")) {
-            toast("PIN must be 4–8 digits");
-            return;
+        pad.setMessage(message != null ? message
+                : s == Step.NEW ? "4–8 digits, then OK.  Back cancels." : "Back cancels.");
+    }
+
+    private void onPinEntered(String pin) {
+        switch (step) {
+            case CURRENT:
+                if (Pin.check(this, pin)) goTo(Step.NEW, null);
+                else pad.setMessage("Wrong PIN");
+                break;
+            case NEW:
+                if (pin.length() < 4) {
+                    pad.setMessage("PIN must be 4–8 digits");
+                } else {
+                    newPin = pin;
+                    goTo(Step.CONFIRM, null);
+                }
+                break;
+            case CONFIRM:
+                if (pin.equals(newPin)) {
+                    Pin.set(this, pin);
+                    Toast.makeText(this, "PIN saved", Toast.LENGTH_SHORT).show();
+                    showMenu();
+                } else {
+                    goTo(Step.NEW, "PINs didn't match. Enter new PIN again.");
+                }
+                break;
         }
-        if (!a.equals(b)) {
-            toast("PINs don't match");
-            return;
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent e) {
+        if (pad == null) return super.dispatchKeyEvent(e);
+        if (e.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+            if (e.getAction() == KeyEvent.ACTION_UP) showMenu();
+            return true;
         }
-        Pin.set(this, a);
-        current.setText("");
-        pin1.setText("");
-        pin2.setText("");
-        toast("PIN saved");
-        refresh();
+        return pad.handleKey(e) || super.dispatchKeyEvent(e);
     }
 
     private void startLockService(boolean lockNow) {
         Intent i = new Intent(this, LockService.class);
         i.putExtra(LockService.EXTRA_LOCK_NOW, lockNow);
         startForegroundService(i);
-    }
-
-    private void toast(String s) {
-        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
     }
 }

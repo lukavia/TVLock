@@ -54,8 +54,11 @@ is the only way to grant the overlay permission.
 > different app to Android, so remove it first: `adb uninstall com.example.tvlock`
 
 ## 4. Set your PIN
-Open **TV Lock** from Apps on the Chromecast, set a PIN, then press
-**Lock now** to test. Also test by turning the TV off and on.
+Open **TV Lock** from Apps on the Chromecast and choose **Set PIN** (or
+**Change PIN**). PINs are entered with the same hidden D-pad keypad as the
+lock screen (see *Entering the PIN* above): current PIN if one is set, then
+the new PIN, then the new PIN again. Back cancels. Then press **Lock now**
+to test. Also test by turning the TV off and on.
 
 ## Forgot the PIN?
 From your already-authorised computer:
