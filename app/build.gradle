@@ -2,6 +2,12 @@ plugins {
     id 'com.android.application'
 }
 
+// Release signing comes from environment variables so the key never lives in
+// the repo. CI sets these from GitHub secrets (see .github/workflows/build.yml).
+def keystorePath = System.getenv('TVLOCK_KEYSTORE')
+def keystorePassword = System.getenv('TVLOCK_KEYSTORE_PASSWORD')
+def hasReleaseKey = keystorePath && keystorePassword && file(keystorePath).exists()
+
 android {
     namespace 'com.lukavia.tvlock'
     compileSdk 34
@@ -10,12 +16,26 @@ android {
         applicationId "com.lukavia.tvlock"
         minSdk 26
         targetSdk 34
-        versionCode 1
+        versionCode((System.getenv('GITHUB_RUN_NUMBER') ?: '1') as int)
         versionName "1.0"
     }
 
+    signingConfigs {
+        if (hasReleaseKey) {
+            release {
+                storeFile file(keystorePath)
+                storePassword keystorePassword
+                keyAlias 'tvlock'
+                keyPassword keystorePassword
+            }
+        }
+    }
+
     buildTypes {
-        release { minifyEnabled false }
+        release {
+            minifyEnabled false
+            if (hasReleaseKey) signingConfig signingConfigs.release
+        }
     }
 
     compileOptions {

@@ -26,14 +26,28 @@ also type digits directly.
 
 ## 1. Build the APK
 **From GitHub (no local setup):** every push runs the *Build APK* workflow.
-Open the run under the **Actions** tab and download the `tvlock-debug-apk`
-artifact. Pushing a tag like `v1.0` also attaches the APK to a GitHub Release.
+Open the run under the **Actions** tab and download the `tvlock-apk`
+artifact (`tvlock.apk` inside). Pushing a tag like `v1.0` also attaches the APK to a GitHub Release.
 
 **Locally:** with JDK 17 and the Android SDK installed (or Android Studio):
 ```
 ./gradlew assembleDebug
 ```
 The APK lands in `app/build/outputs/apk/debug/app-debug.apk`.
+
+### Signing key
+CI signs the APK with a fixed key so updates install over the old version
+(`adb install -r`) and keep your PIN. The key lives only in two repository
+secrets (Settings > Secrets and variables > Actions):
+
+| Secret | Value |
+| --- | --- |
+| `TVLOCK_KEYSTORE_BASE64` | the PKCS12 keystore, base64-encoded (alias `tvlock`) |
+| `TVLOCK_KEYSTORE_PASSWORD` | its password |
+
+Without them CI falls back to a debug build signed with a throwaway key.
+Keep a backup of the keystore: if it's lost, the next install needs an
+uninstall first, which wipes the PIN.
 
 ## 2. Enable ADB on the Chromecast
 1. Settings > System > About > click **Android TV OS build** 7 times.
@@ -44,7 +58,7 @@ The APK lands in `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## 3. Install and grant permission
 ```
-adb install app/build/outputs/apk/debug/app-debug.apk
+adb install -r tvlock.apk
 adb shell appops set com.lukavia.tvlock SYSTEM_ALERT_WINDOW allow
 ```
 Google TV hides the "Display over other apps" screen, so the `appops` command
