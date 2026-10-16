@@ -107,10 +107,25 @@ How it works and what to know:
   shown after entering the PIN; if it leaks, press **New topic** and
   subscribe again.
 - It needs internet access and uses the public ntfy.sh server by default.
-  To use your own ntfy server (must be HTTPS):
-  ```
-  adb shell am start -n com.lukavia.tvlock/.SetupActivity --es ntfy_server https://ntfy.example.com
-  ```
+
+### Using your own ntfy server
+On **Phone unlock** press **Server** and enter its address, e.g.
+`https://ntfy.example.com` (HTTPS is required; Android blocks plain HTTP).
+Then subscribe to the topic on your phone using the same server.
+
+If the server has access control (`auth-default-access: deny-all`), create a
+token and press **Access token** to enter it:
+```
+ntfy user add tvlock
+ntfy access tvlock 'tvlock-*' rw
+ntfy token add tvlock
+```
+Log in to the server in the ntfy app on your phone too. The token is also
+included in the notification's Unlock / Not now buttons (they need it to
+post back), so give it access to the `tvlock-*` topics only, as above.
+
+For iPhone notifications from a self-hosted server, the server needs
+`upstream-base-url: "https://ntfy.sh"` in its config.
 
 ## Forgot the PIN?
 From your already-authorised computer:

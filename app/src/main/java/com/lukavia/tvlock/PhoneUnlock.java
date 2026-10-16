@@ -57,6 +57,15 @@ final class PhoneUnlock {
         prefs(c).edit().putString("server", s.isEmpty() ? DEFAULT_SERVER : s).apply();
     }
 
+    /** Optional access token for ntfy servers with access control; "" if none. */
+    static String token(Context c) {
+        return prefs(c).getString("token", "");
+    }
+
+    static void setToken(Context c, String token) {
+        prefs(c).edit().putString("token", token.trim()).apply();
+    }
+
     /** The topic the phone subscribes to; created on first use. */
     static String topic(Context c) {
         String t = prefs(c).getString("topic", null);
@@ -109,7 +118,7 @@ final class PhoneUnlock {
     /** Sends the notification and listens for the reply; no-op if disabled or already running. */
     void start(Listener listener) {
         if (session != null || !isEnabled(ctx)) return;
-        session = new Session(server(ctx), topic(ctx), random(24), listener);
+        session = new Session(server(ctx), token(ctx), topic(ctx), random(24), listener);
         session.thread.start();
     }
 
@@ -129,6 +138,7 @@ final class PhoneUnlock {
      */
     private final class Session implements Runnable {
         final String server;
+        final String token;
         final String topic;
         final String code;
         final Listener listener;
@@ -138,8 +148,9 @@ final class PhoneUnlock {
         String publishedId;
         String since = Long.toString(System.currentTimeMillis() / 1000);
 
-        Session(String server, String topic, String code, Listener listener) {
+        Session(String server, String token, String topic, String code, Listener listener) {
             this.server = server;
+            this.token = token;
             this.topic = topic;
             this.code = code;
             this.listener = listener;
@@ -161,6 +172,7 @@ final class PhoneUnlock {
                     // then publish, so the reply can't arrive before we're listening.
                     HttpURLConnection c = (HttpURLConnection) new URL(server + "/" + topic + ","
                             + topic + "-unlock/json?since=" + since).openConnection();
+                    authorize(c);
                     c.setConnectTimeout(15_000);
                     c.setReadTimeout(120_000); // ntfy sends a keepalive every 45s
                     conn = c;
@@ -215,10 +227,15 @@ final class PhoneUnlock {
             });
         }
 
+        private void authorize(HttpURLConnection c) {
+            if (!token.isEmpty()) c.setRequestProperty("Authorization", "Bearer " + token);
+        }
+
         /** Publishes the notification and returns its message id. */
         private String publish() throws Exception {
             HttpURLConnection c = (HttpURLConnection) new URL(server + "/" + topic).openConnection();
             try {
+                authorize(c);
                 c.setConnectTimeout(15_000);
                 c.setReadTimeout(15_000);
                 c.setRequestMethod("POST");
@@ -227,9 +244,12 @@ final class PhoneUnlock {
                 c.setRequestProperty("Title", "TV Lock");
                 c.setRequestProperty("Priority", "high");
                 c.setRequestProperty("Tags", "tv");
+                // On a server with access control the phone's button taps need the
+                // token too, so it is passed along in the action headers.
+                String auth = token.isEmpty() ? "" : ", headers.Authorization=Bearer " + token;
                 c.setRequestProperty("Actions",
-                        "http, Unlock, " + unlockUrl + ", method=POST, body=" + code + ", clear=true; "
-                        + "http, Not now, " + unlockUrl + ", method=POST, body=deny " + code);
+                        "http, Unlock, " + unlockUrl + ", method=POST, body=" + code + ", clear=true" + auth + "; "
+                        + "http, Not now, " + unlockUrl + ", method=POST, body=deny " + code + auth);
                 try (OutputStream out = c.getOutputStream()) {
                     out.write(("Someone wants to watch TV. Unlock, say Not now, "
                             + "or send a message to this topic to show it on the TV.")

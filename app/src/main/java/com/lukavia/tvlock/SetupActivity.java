@@ -1,6 +1,7 @@
 package com.lukavia.tvlock;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.os.Bundle;
@@ -8,7 +9,9 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
+import android.text.InputType;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -25,9 +28,6 @@ import com.google.zxing.qrcode.QRCodeWriter;
  * configure phone unlock. PINs are entered with the same blind D-pad pad as
  * the lock screen. The phone unlock screen reveals the ntfy topic, so it is
  * only shown after the PIN has been entered.
- *
- * A self-hosted ntfy server can be set from a computer with:
- *   adb shell am start -n com.lukavia.tvlock/.SetupActivity --es ntfy_server https://ntfy.example.com
  */
 public class SetupActivity extends Activity {
     private enum Step { CURRENT, NEW, CONFIRM, VERIFY_FOR_PHONE }
@@ -45,11 +45,6 @@ public class SetupActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        String server = getIntent().getStringExtra("ntfy_server");
-        if (server != null) {
-            PhoneUnlock.setServer(this, server);
-            Toast.makeText(this, "ntfy server set to " + PhoneUnlock.server(this), Toast.LENGTH_LONG).show();
-        }
         menu = buildMenu();
         showMenu();
         startLockService(false);
@@ -223,6 +218,8 @@ public class SetupActivity extends Activity {
                 + "2. Scan the QR code, or in the app add a subscription with\n"
                 + "     Server: " + PhoneUnlock.server(this) + "\n"
                 + "     Topic:  " + PhoneUnlock.topic(this) + "\n"
+                + (PhoneUnlock.token(this).isEmpty() ? ""
+                        : "     (access token set; log in to the server in the app too)\n")
                 + "3. When the TV locks, your phone gets a notification.\n"
                 + "    Tap Unlock on it to unlock the TV.\n\n"
                 + "Anyone who knows the topic can unlock the TV. If it leaks,\n"
@@ -248,15 +245,37 @@ public class SetupActivity extends Activity {
         back.setText("Back");
         back.setOnClickListener(v -> showMenu());
 
+        Button server = new Button(this);
+        server.setText("Server");
+        server.setOnClickListener(v -> editText("ntfy server", "https://ntfy.example.com",
+                PhoneUnlock.server(this), InputType.TYPE_TEXT_VARIATION_URI, value -> {
+                    PhoneUnlock.setServer(this, value);
+                    showPhoneScreen();
+                }));
+
+        Button token = new Button(this);
+        token.setText("Access token");
+        token.setOnClickListener(v -> editText("Access token (leave empty if none)", "tk_...",
+                PhoneUnlock.token(this), InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD, value -> {
+                    PhoneUnlock.setToken(this, value);
+                    showPhoneScreen();
+                }));
+
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
         buttons.addView(toggle);
         buttons.addView(newTopic);
         buttons.addView(back);
 
+        LinearLayout serverButtons = new LinearLayout(this);
+        serverButtons.setOrientation(LinearLayout.HORIZONTAL);
+        serverButtons.addView(server);
+        serverButtons.addView(token);
+
         col.addView(title);
         col.addView(info);
         col.addView(buttons);
+        col.addView(serverButtons);
         row.addView(qr);
         row.addView(col);
 
@@ -264,6 +283,25 @@ public class SetupActivity extends Activity {
         scroll.addView(row);
         setContentView(scroll);
         toggle.requestFocus();
+    }
+
+    private interface TextCallback {
+        void onText(String value);
+    }
+
+    private void editText(String title, String hint, String current, int variation, TextCallback done) {
+        EditText field = new EditText(this);
+        field.setInputType(InputType.TYPE_CLASS_TEXT | variation);
+        field.setHint(hint);
+        field.setText(current);
+        field.setSingleLine(true);
+        field.setSelection(field.getText().length());
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setView(field)
+                .setPositiveButton("Save", (d, w) -> done.onText(field.getText().toString()))
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private static Bitmap qrBitmap(String text, int size) {
