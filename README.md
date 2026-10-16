@@ -75,6 +75,33 @@ lock screen (see *Entering the PIN* above): current PIN if one is set, then
 the new PIN, then the new PIN again. Back cancels. Then press **Lock now**
 to test. Also test by turning the TV off and on.
 
+## 5. Unlock from your phone (optional)
+Instead of typing the PIN you can unlock with one tap on your phone, using
+the free [ntfy](https://ntfy.sh) push app (Android and iPhone).
+
+1. Install **ntfy** on your phone.
+2. On the TV open **TV Lock > Phone unlock** (asks for the PIN) and press
+   **Turn on**.
+3. Scan the QR code, or add a subscription in the ntfy app using the server
+   and topic shown on screen.
+
+Whenever the lock screen appears while the TV is on, your phone gets a
+"TV Lock" notification. Tap **Unlock** and the TV unlocks. The PIN keeps
+working as before, and nothing is sent while the TV is in standby.
+
+How it works and what to know:
+- The TV publishes to your private topic and listens on `<topic>-unlock`
+  for a one-time code that changes every time it locks, so an old
+  notification can't unlock it later.
+- Anyone who knows the topic name can unlock the TV. It's random and only
+  shown after entering the PIN; if it leaks, press **New topic** and
+  subscribe again.
+- It needs internet access and uses the public ntfy.sh server by default.
+  To use your own ntfy server (must be HTTPS):
+  ```
+  adb shell am start -n com.lukavia.tvlock/.SetupActivity --es ntfy_server https://ntfy.example.com
+  ```
+
 ## Forgot the PIN?
 From your already-authorised computer:
 ```
@@ -91,3 +118,4 @@ the only fallback is a factory reset.
   the home screen is usable.
 - Anyone with ADB access to your network and an authorised computer can remove it.
 - Changing the PIN requires the current PIN.
+- Phone unlock is only as private as its ntfy topic name.

@@ -4,18 +4,24 @@ import android.content.Context;
 import android.graphics.PixelFormat;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.view.KeyEvent;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 
-/** Full-screen lock drawn over everything, using the blind {@link PinPadView}. */
+/**
+ * Full-screen lock drawn over everything, using the blind {@link PinPadView}.
+ * While the screen is on it also offers {@link PhoneUnlock} if enabled.
+ */
 final class LockOverlay {
     private static final long LOCKOUT_STEP_MS = 30_000L;
 
     private final Context ctx;
     private final WindowManager wm;
+    private final PowerManager pm;
+    private final PhoneUnlock phone;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private FrameLayout root;
@@ -29,12 +35,14 @@ final class LockOverlay {
     LockOverlay(Context ctx) {
         this.ctx = ctx;
         this.wm = ctx.getSystemService(WindowManager.class);
+        this.pm = ctx.getSystemService(PowerManager.class);
+        this.phone = new PhoneUnlock(ctx);
     }
 
     void show() {
         if (root != null) {
             pad.clear();
-            tick();
+            updatePhone();
             return;
         }
         root = buildView();
@@ -52,11 +60,12 @@ final class LockOverlay {
             return;
         }
         pad.clear();
-        tick();
+        updatePhone();
         root.post(() -> { if (root != null) root.requestFocus(); });
     }
 
     void hide() {
+        phone.stop();
         handler.removeCallbacks(ticker);
         if (root != null) {
             try { wm.removeView(root); } catch (Exception ignored) {}
@@ -87,11 +96,29 @@ final class LockOverlay {
         return frame;
     }
 
+    /**
+     * Only notify the phone while the screen is on: the lock is also put up
+     * when the TV goes to standby, and that shouldn't ping anyone.
+     */
+    private void updatePhone() {
+        if (root != null && pm.isInteractive()) {
+            phone.start(this::unlock);
+        } else {
+            phone.stop();
+        }
+        tick();
+    }
+
+    private void unlock() {
+        failures = 0;
+        lockedUntil = 0;
+        hide();
+    }
+
     private void submit(String pin) {
         if (isLockedOut()) return;
         if (Pin.check(ctx, pin)) {
-            failures = 0;
-            hide();
+            unlock();
             return;
         }
         failures++;
@@ -114,7 +141,7 @@ final class LockOverlay {
         long left = lockedUntil - SystemClock.elapsedRealtime();
         if (left <= 0) {
             pad.setInputEnabled(true);
-            pad.setMessage("Enter PIN");
+            pad.setMessage(phone.isRunning() ? "Enter PIN, or tap Unlock on your phone" : "Enter PIN");
             return;
         }
         pad.setInputEnabled(false);
