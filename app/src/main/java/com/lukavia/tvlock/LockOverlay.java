@@ -15,7 +15,7 @@ import android.widget.FrameLayout;
  * Full-screen lock drawn over everything, using the blind {@link PinPadView}.
  * While the screen is on it also offers {@link PhoneUnlock} if enabled.
  */
-final class LockOverlay {
+final class LockOverlay implements PhoneUnlock.Listener {
     private static final long LOCKOUT_STEP_MS = 30_000L;
 
     private final Context ctx;
@@ -29,6 +29,8 @@ final class LockOverlay {
 
     private int failures = 0;
     private long lockedUntil = 0;
+    /** Latest reply from the phone ("Not now" or a custom message), shown under the title. */
+    private String phoneNote;
 
     private final Runnable ticker = this::tick;
 
@@ -66,6 +68,7 @@ final class LockOverlay {
 
     void hide() {
         phone.stop();
+        phoneNote = null;
         handler.removeCallbacks(ticker);
         if (root != null) {
             try { wm.removeView(root); } catch (Exception ignored) {}
@@ -102,10 +105,22 @@ final class LockOverlay {
      */
     private void updatePhone() {
         if (root != null && pm.isInteractive()) {
-            phone.start(this::unlock);
+            phone.start(this);
         } else {
             phone.stop();
+            phoneNote = null; // a new request goes out next time the screen turns on
         }
+        tick();
+    }
+
+    @Override
+    public void onUnlock() {
+        unlock();
+    }
+
+    @Override
+    public void onMessage(String text) {
+        phoneNote = text;
         tick();
     }
 
@@ -141,7 +156,11 @@ final class LockOverlay {
         long left = lockedUntil - SystemClock.elapsedRealtime();
         if (left <= 0) {
             pad.setInputEnabled(true);
-            pad.setMessage(phone.isRunning() ? "Enter PIN, or tap Unlock on your phone" : "Enter PIN");
+            if (phoneNote != null) {
+                pad.setMessage("From phone: " + phoneNote);
+            } else {
+                pad.setMessage(phone.isRunning() ? "Enter PIN, or tap Unlock on your phone" : "Enter PIN");
+            }
             return;
         }
         pad.setInputEnabled(false);

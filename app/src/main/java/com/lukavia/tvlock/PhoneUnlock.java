@@ -21,9 +21,10 @@ import java.security.SecureRandom;
  *
  * While the lock is on screen the TV publishes a notification to a private
  * topic the phone subscribes to. Its "Unlock" action POSTs a one-time code to
- * a second "-unlock" topic that only the TV listens on; when that code
- * arrives the lock is lifted. A new code is used for every lock session, so
- * old notifications can't unlock the TV.
+ * a second "-unlock" topic that the TV listens on; when that code arrives the
+ * lock is lifted. "Not now" POSTs a deny for the same code, and any text the
+ * parent sends to the main topic is shown on the lock screen. A new code is
+ * used for every lock session, so old notifications can't unlock the TV.
  */
 final class PhoneUnlock {
     static final String DEFAULT_SERVER = "https://ntfy.sh";
@@ -82,6 +83,17 @@ final class PhoneUnlock {
 
     // --- lock session -----------------------------------------------------
 
+    /** Callbacks run on the main thread. */
+    interface Listener {
+        void onUnlock();
+
+        /** "Not now" from the notification, or a free-text message from the phone. */
+        void onMessage(String text);
+    }
+
+    static final String NOT_NOW = "Not now. Ask again later.";
+    private static final int MAX_MESSAGE = 200;
+
     private final Context ctx;
     private final Handler main = new Handler(Looper.getMainLooper());
     private Session session;
@@ -94,10 +106,10 @@ final class PhoneUnlock {
         return session != null;
     }
 
-    /** Sends the notification and waits for the reply; no-op if disabled or already running. */
-    void start(Runnable onUnlock) {
+    /** Sends the notification and listens for the reply; no-op if disabled or already running. */
+    void start(Listener listener) {
         if (session != null || !isEnabled(ctx)) return;
-        session = new Session(server(ctx), topic(ctx), random(24), onUnlock);
+        session = new Session(server(ctx), topic(ctx), random(24), listener);
         session.thread.start();
     }
 
@@ -107,21 +119,30 @@ final class PhoneUnlock {
         session = null;
     }
 
+    /**
+     * One lock session. Listens on both topics:
+     * - {@code <topic>-unlock} receives the notification's action bodies:
+     *   the session code unlocks, {@code "deny <code>"} means "Not now".
+     * - {@code <topic>} itself, so a message the parent sends to it from the
+     *   ntfy app is shown on the lock screen (our own notification is skipped).
+     * Messages only ever display text; only the code unlocks.
+     */
     private final class Session implements Runnable {
         final String server;
         final String topic;
         final String code;
-        final Runnable onUnlock;
-        final long since = System.currentTimeMillis() / 1000;
+        final Listener listener;
         final Thread thread = new Thread(this, "tvlock-phone-unlock");
         volatile boolean cancelled;
         volatile HttpURLConnection conn;
+        String publishedId;
+        String since = Long.toString(System.currentTimeMillis() / 1000);
 
-        Session(String server, String topic, String code, Runnable onUnlock) {
+        Session(String server, String topic, String code, Listener listener) {
             this.server = server;
             this.topic = topic;
             this.code = code;
-            this.onUnlock = onUnlock;
+            this.listener = listener;
         }
 
         void cancel() {
@@ -134,33 +155,25 @@ final class PhoneUnlock {
         @Override
         public void run() {
             long backoff = 2_000;
-            boolean published = false;
             while (!cancelled) {
                 try {
-                    // Subscribe first (with "since" so nothing is missed across reconnects),
+                    // Subscribe first (resuming from "since" across reconnects),
                     // then publish, so the reply can't arrive before we're listening.
-                    HttpURLConnection c = (HttpURLConnection) new URL(
-                            server + "/" + topic + "-unlock/json?since=" + since).openConnection();
+                    HttpURLConnection c = (HttpURLConnection) new URL(server + "/" + topic + ","
+                            + topic + "-unlock/json?since=" + since).openConnection();
                     c.setConnectTimeout(15_000);
                     c.setReadTimeout(120_000); // ntfy sends a keepalive every 45s
                     conn = c;
                     if (c.getResponseCode() != 200) throw new IOException("HTTP " + c.getResponseCode());
-                    if (!published) {
-                        publish();
-                        published = true;
-                    }
+                    if (publishedId == null) publishedId = publish();
                     BufferedReader r = new BufferedReader(
                             new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8));
                     String line;
                     while (!cancelled && (line = r.readLine()) != null) {
                         JSONObject o = new JSONObject(line);
-                        if ("message".equals(o.optString("event"))
-                                && code.equals(o.optString("message").trim())) {
-                            main.post(() -> {
-                                if (!cancelled) onUnlock.run();
-                            });
-                            return;
-                        }
+                        if (!"message".equals(o.optString("event"))) continue;
+                        since = o.optString("id", since);
+                        if (handle(o)) return;
                     }
                     backoff = 2_000;
                 } catch (Exception e) {
@@ -179,23 +192,54 @@ final class PhoneUnlock {
             }
         }
 
-        private void publish() throws IOException {
+        /** Returns true when the session is finished (unlocked). */
+        private boolean handle(JSONObject o) {
+            String text = o.optString("message").trim();
+            if ((topic + "-unlock").equals(o.optString("topic"))) {
+                if (code.equals(text)) {
+                    post(listener::onUnlock);
+                    return true;
+                }
+                if (("deny " + code).equals(text)) post(() -> listener.onMessage(NOT_NOW));
+                return false; // anything else on the unlock topic is ignored
+            }
+            if (o.optString("id").equals(publishedId) || text.isEmpty()) return false;
+            String shown = text.length() > MAX_MESSAGE ? text.substring(0, MAX_MESSAGE) + "…" : text;
+            post(() -> listener.onMessage(shown));
+            return false;
+        }
+
+        private void post(Runnable r) {
+            main.post(() -> {
+                if (!cancelled) r.run();
+            });
+        }
+
+        /** Publishes the notification and returns its message id. */
+        private String publish() throws Exception {
             HttpURLConnection c = (HttpURLConnection) new URL(server + "/" + topic).openConnection();
             try {
                 c.setConnectTimeout(15_000);
                 c.setReadTimeout(15_000);
                 c.setRequestMethod("POST");
                 c.setDoOutput(true);
+                String unlockUrl = server + "/" + topic + "-unlock";
                 c.setRequestProperty("Title", "TV Lock");
                 c.setRequestProperty("Priority", "high");
-                c.setRequestProperty("Tags", "lock");
-                c.setRequestProperty("Actions", "http, Unlock, " + server + "/" + topic
-                        + "-unlock, method=POST, body=" + code + ", clear=true");
+                c.setRequestProperty("Tags", "tv");
+                c.setRequestProperty("Actions",
+                        "http, Unlock, " + unlockUrl + ", method=POST, body=" + code + ", clear=true; "
+                        + "http, Not now, " + unlockUrl + ", method=POST, body=deny " + code);
                 try (OutputStream out = c.getOutputStream()) {
-                    out.write("The TV is locked. Tap Unlock to unlock it."
+                    out.write(("Someone wants to watch TV. Unlock, say Not now, "
+                            + "or send a message to this topic to show it on the TV.")
                             .getBytes(StandardCharsets.UTF_8));
                 }
                 if (c.getResponseCode() != 200) throw new IOException("HTTP " + c.getResponseCode());
+                try (BufferedReader r = new BufferedReader(
+                        new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8))) {
+                    return new JSONObject(r.readLine()).optString("id");
+                }
             } finally {
                 c.disconnect();
             }

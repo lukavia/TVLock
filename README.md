@@ -86,13 +86,23 @@ the free [ntfy](https://ntfy.sh) push app (Android and iPhone).
    and topic shown on screen.
 
 Whenever the lock screen appears while the TV is on, your phone gets a
-"TV Lock" notification. Tap **Unlock** and the TV unlocks. The PIN keeps
-working as before, and nothing is sent while the TV is in standby.
+"TV Lock" notification with two buttons:
+- **Unlock** unlocks the TV.
+- **Not now** keeps it locked and shows "Not now. Ask again later." on the
+  TV. The notification stays, so you can still tap **Unlock** later.
+
+To send your own message instead (e.g. "No TV until homework is done"),
+open the TV Lock topic in the ntfy app and send a message to it; the TV
+shows it on the lock screen. Messages never unlock the TV.
+
+The PIN keeps working as before, and nothing is sent while the TV is in
+standby.
 
 How it works and what to know:
 - The TV publishes to your private topic and listens on `<topic>-unlock`
   for a one-time code that changes every time it locks, so an old
-  notification can't unlock it later.
+  notification can't unlock it later. It also listens on the topic itself
+  for text messages to display.
 - Anyone who knows the topic name can unlock the TV. It's random and only
   shown after entering the PIN; if it leaks, press **New topic** and
   subscribe again.
