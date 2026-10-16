@@ -6,14 +6,14 @@ watching the screen can tell which digits you press. Back is blocked;
 three wrong PINs trigger a 30-second lockout that grows with each extra miss.
 
 ## Entering the PIN
-The keypad on screen is only a reference and never highlights anything:
+The current row is highlighted, but never the individual key you press:
 ```
  1  2  3
  4  5  6
  7  8  9
  ⌫  0  OK
 ```
-- A hidden cursor starts on the **top row** (`1 2 3`).
+- The cursor starts on the **top row** (`1 2 3`).
 - **Up / Down** move it to another row (it wraps, so one **Up** reaches `⌫ 0 OK`).
 - **Left / Center / Right** press the left, middle or right key of that row.
   The cursor then jumps back to the top row.
@@ -21,7 +21,8 @@ The keypad on screen is only a reference and never highlights anything:
 Examples: `1` = Left · `5` = Down, Center · `9` = Down, Down, Right ·
 `0` = Up, Center · confirm = Up, Right · delete last digit = Up, Left.
 
-Only the number of dots changes on screen. A remote with number keys can
+Someone watching sees which row you're on, but not which of its three keys
+you pressed. A remote with number keys can
 also type digits directly.
 
 ## 1. Build the APK

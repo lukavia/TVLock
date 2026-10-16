@@ -11,10 +11,10 @@ import android.widget.TextView;
 /**
  * PIN pad operated "blind" with the D-pad.
  *
- * The keypad on screen is a static legend and never highlights anything:
- * Up/Down move a hidden row cursor (wrapping), Left/Center/Right press the
- * key in that column of the current row, then the cursor silently returns
- * to the top row. Someone watching the screen only sees the dot count grow.
+ * Up/Down move a row cursor (wrapping); the whole current row is highlighted.
+ * Left/Center/Right press the key in that column of the current row, and the
+ * cursor returns to the top row. No individual key is ever highlighted, so
+ * someone watching the screen sees the row but not which of its keys you chose.
  * The remote's number keys also work directly.
  *
  * The view never takes focus; the hosting window forwards key events to
@@ -40,6 +40,8 @@ final class PinPadView extends LinearLayout {
     private final TextView title;
     private final TextView dots;
     private final TextView msg;
+    private final TextView[][] keyViews = new TextView[KEYS.length][];
+    private final float density;
 
     private Listener listener;
     private boolean inputEnabled = true;
@@ -48,6 +50,7 @@ final class PinPadView extends LinearLayout {
     PinPadView(Context ctx) {
         super(ctx);
         float d = ctx.getResources().getDisplayMetrics().density;
+        density = d;
         setOrientation(VERTICAL);
         setGravity(Gravity.CENTER);
         setBackgroundColor(0xFF000000);
@@ -62,10 +65,11 @@ final class PinPadView extends LinearLayout {
         GridLayout grid = new GridLayout(ctx);
         grid.setColumnCount(3);
         int m = (int) (6 * d);
-        for (String[] keyRow : KEYS) {
-            for (String key : keyRow) {
-                TextView k = text(key, 24, 0xFFFFFFFF);
-                k.setBackground(rounded(0xFF333333, d));
+        for (int r = 0; r < KEYS.length; r++) {
+            keyViews[r] = new TextView[KEYS[r].length];
+            for (int c = 0; c < KEYS[r].length; c++) {
+                TextView k = text(KEYS[r][c], 24, 0xFFFFFFFF);
+                keyViews[r][c] = k;
                 GridLayout.LayoutParams p = new GridLayout.LayoutParams();
                 p.width = (int) (96 * d);
                 p.height = (int) (64 * d);
@@ -82,6 +86,7 @@ final class PinPadView extends LinearLayout {
         addView(msg, wrap());
         addView(grid, wrap());
         addView(help, wrap());
+        updateRow();
     }
 
     void setListener(Listener l) { listener = l; }
@@ -94,6 +99,7 @@ final class PinPadView extends LinearLayout {
         entry.setLength(0);
         row = 0;
         updateDots();
+        updateRow();
     }
 
     /** Returns true if the key belongs to the pad (and was consumed). */
@@ -104,15 +110,18 @@ final class PinPadView extends LinearLayout {
 
         if (k >= KeyEvent.KEYCODE_0 && k <= KeyEvent.KEYCODE_9) {
             row = 0;
+            updateRow();
             digit((char) ('0' + (k - KeyEvent.KEYCODE_0)));
             return true;
         }
         switch (k) {
             case KeyEvent.KEYCODE_DPAD_UP:
                 row = (row + KEYS.length - 1) % KEYS.length;
+                updateRow();
                 break;
             case KeyEvent.KEYCODE_DPAD_DOWN:
                 row = (row + 1) % KEYS.length;
+                updateRow();
                 break;
             case KeyEvent.KEYCODE_DPAD_LEFT:
                 press(0);
@@ -141,6 +150,7 @@ final class PinPadView extends LinearLayout {
     private void press(int column) {
         String key = KEYS[row][column];
         row = 0;
+        updateRow();
         switch (key) {
             case BACKSPACE:
                 if (inputEnabled && entry.length() > 0) entry.setLength(entry.length() - 1);
@@ -162,6 +172,12 @@ final class PinPadView extends LinearLayout {
         if (!inputEnabled || entry.length() >= MAX_DIGITS) return;
         entry.append(c);
         updateDots();
+    }
+
+    private void updateRow() {
+        for (int r = 0; r < keyViews.length; r++) {
+            for (TextView k : keyViews[r]) k.setBackground(keyBackground(r == row));
+        }
     }
 
     private void updateDots() {
@@ -186,10 +202,11 @@ final class PinPadView extends LinearLayout {
         return p;
     }
 
-    private static GradientDrawable rounded(int color, float d) {
+    private GradientDrawable keyBackground(boolean currentRow) {
         GradientDrawable g = new GradientDrawable();
-        g.setColor(color);
-        g.setCornerRadius(12 * d);
+        g.setColor(currentRow ? 0xFF5A5A5A : 0xFF333333);
+        g.setCornerRadius(12 * density);
+        if (currentRow) g.setStroke((int) (2 * density), 0xFFFFFFFF);
         return g;
     }
 }
