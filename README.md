@@ -112,8 +112,9 @@ How it works and what to know:
 - On **Phone unlock**, press **Send test**. The TV shows "Sent" or why it
   failed (server not found, certificate error, HTTP 403 = wrong/missing
   access token, ...).
-- The lock screen also shows the reason after "Phone unlock:" when it
-  can't send the notification.
+- The lock screen shows "(notifying phone…)" until the notification has
+  been sent, and the reason after "Phone unlock:" if sending or checking
+  for your reply fails.
 - If the test arrives but lock notifications don't, check the phone is
   subscribed to the exact topic shown on the TV, on the same server.
 

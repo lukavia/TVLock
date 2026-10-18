@@ -159,8 +159,11 @@ final class PhoneUnlock {
         /** "Not now" from the notification, or a free-text message from the phone. */
         void onMessage(String text);
 
-        /** Connection trouble (null once the notification has been sent). */
-        void onProblem(String problemOrNull);
+        /** The notification reached the server (also called when a problem clears). */
+        void onSent();
+
+        /** Connection trouble while sending or checking for a reply. */
+        void onProblem(String problem);
     }
 
     static final String NOT_NOW = "Not now. Ask again later.";
@@ -228,49 +231,68 @@ final class PhoneUnlock {
 
         @Override
         public void run() {
+            // 1. Send the notification, retrying until it goes through.
             long backoff = 2_000;
-            while (!cancelled) {
+            while (!cancelled && publishedId == null) {
                 try {
-                    // Subscribe first (resuming from "since" across reconnects),
-                    // then publish, so the reply can't arrive before we're listening.
-                    HttpURLConnection c = (HttpURLConnection) new URL(server + "/" + topic + ","
-                            + topic + "-unlock/json?since=" + since).openConnection();
-                    authorize(c);
-                    c.setConnectTimeout(15_000);
-                    c.setReadTimeout(120_000); // ntfy sends a keepalive every 45s
-                    conn = c;
-                    checkOk(c);
-                    if (publishedId == null) {
-                        publishedId = publish();
-                        post(() -> listener.onProblem(null));
-                    }
-                    BufferedReader r = new BufferedReader(
-                            new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8));
-                    String line;
-                    while (!cancelled && (line = r.readLine()) != null) {
-                        JSONObject o = new JSONObject(line);
-                        if (!"message".equals(o.optString("event"))) continue;
-                        since = o.optString("id", since);
-                        if (handle(o)) return;
-                    }
-                    backoff = 2_000;
+                    publishedId = publish();
+                    post(listener::onSent);
                 } catch (Exception e) {
                     if (cancelled) return;
-                    if (publishedId == null) {
-                        String problem = describe(e);
-                        post(() -> listener.onProblem(problem));
-                    }
-                } finally {
-                    HttpURLConnection c = conn;
-                    if (c != null) c.disconnect();
-                    conn = null;
+                    String problem = describe(e);
+                    post(() -> listener.onProblem(problem));
+                    if (!sleep(backoff)) return;
+                    backoff = Math.min(backoff * 2, 30_000);
                 }
+            }
+            // 2. Poll both topics for replies. Polling (rather than a held-open
+            //    stream) works behind any reverse proxy; "since" makes sure
+            //    nothing sent after the notification is missed.
+            boolean failing = false;
+            while (!cancelled) {
                 try {
-                    Thread.sleep(backoff);
-                } catch (InterruptedException e) {
-                    return;
+                    HttpURLConnection c = (HttpURLConnection) new URL(server + "/" + topic + ","
+                            + topic + "-unlock/json?poll=1&since=" + since).openConnection();
+                    conn = c;
+                    try {
+                        authorize(c);
+                        c.setConnectTimeout(15_000);
+                        c.setReadTimeout(15_000);
+                        checkOk(c);
+                        BufferedReader r = new BufferedReader(
+                                new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8));
+                        String line;
+                        while (!cancelled && (line = r.readLine()) != null) {
+                            if (line.trim().isEmpty()) continue;
+                            JSONObject o = new JSONObject(line);
+                            if (!"message".equals(o.optString("event"))) continue;
+                            since = o.optString("id", since);
+                            if (handle(o)) return;
+                        }
+                    } finally {
+                        c.disconnect();
+                        conn = null;
+                    }
+                    if (failing) {
+                        failing = false;
+                        post(listener::onSent);
+                    }
+                } catch (Exception e) {
+                    if (cancelled) return;
+                    failing = true;
+                    String problem = "can't check for reply: " + describe(e);
+                    post(() -> listener.onProblem(problem));
                 }
-                backoff = Math.min(backoff * 2, 30_000);
+                if (!sleep(failing ? 10_000 : 3_000)) return;
+            }
+        }
+
+        private boolean sleep(long ms) {
+            try {
+                Thread.sleep(ms);
+                return !cancelled;
+            } catch (InterruptedException e) {
+                return false;
             }
         }
 

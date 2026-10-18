@@ -31,8 +31,10 @@ final class LockOverlay implements PhoneUnlock.Listener {
     private long lockedUntil = 0;
     /** Latest reply from the phone ("Not now" or a custom message), shown under the title. */
     private String phoneNote;
-    /** Why the phone notification couldn't be sent yet, if anything. */
+    /** Current phone unlock trouble, if any. */
     private String phoneProblem;
+    /** Whether the notification has reached the server. */
+    private boolean phoneSent;
 
     private final Runnable ticker = this::tick;
 
@@ -72,6 +74,7 @@ final class LockOverlay implements PhoneUnlock.Listener {
         phone.stop();
         phoneNote = null;
         phoneProblem = null;
+        phoneSent = false;
         handler.removeCallbacks(ticker);
         if (root != null) {
             try { wm.removeView(root); } catch (Exception ignored) {}
@@ -113,6 +116,7 @@ final class LockOverlay implements PhoneUnlock.Listener {
             phone.stop();
             phoneNote = null; // a new request goes out next time the screen turns on
             phoneProblem = null;
+            phoneSent = false;
         }
         tick();
     }
@@ -129,8 +133,15 @@ final class LockOverlay implements PhoneUnlock.Listener {
     }
 
     @Override
-    public void onProblem(String problemOrNull) {
-        phoneProblem = problemOrNull;
+    public void onSent() {
+        phoneSent = true;
+        phoneProblem = null;
+        tick();
+    }
+
+    @Override
+    public void onProblem(String problem) {
+        phoneProblem = problem;
         tick();
     }
 
@@ -171,7 +182,9 @@ final class LockOverlay implements PhoneUnlock.Listener {
             } else if (phoneProblem != null) {
                 pad.setMessage("Enter PIN.  (Phone unlock: " + phoneProblem + ")");
             } else {
-                pad.setMessage(phone.isRunning() ? "Enter PIN, or tap Unlock on your phone" : "Enter PIN");
+                pad.setMessage(!phone.isRunning() ? "Enter PIN"
+                        : phoneSent ? "Enter PIN, or tap Unlock on your phone"
+                        : "Enter PIN  (notifying phone…)");
             }
             return;
         }
