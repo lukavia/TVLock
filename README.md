@@ -107,6 +107,9 @@ How it works and what to know:
   shown after entering the PIN; if it leaks, press **New topic** and
   subscribe again.
 - It needs internet access and uses the public ntfy.sh server by default.
+- While waiting for your tap the TV keeps one connection open to the
+  server. If a reverse proxy buffers it (see the nginx settings below),
+  it falls back to checking every 15 seconds.
 
 ### Not getting the notification?
 - On **Phone unlock**, press **Send test**. The TV shows "Sent" or why it
@@ -136,6 +139,21 @@ post back), so give it access to the `tvlock-*` topics only, as above.
 
 For iPhone notifications from a self-hosted server, the server needs
 `upstream-base-url: "https://ntfy.sh"` in its config.
+
+Behind nginx / Nginx Proxy Manager, turn off buffering so notifications
+stream through (in NPM: enable *Websockets Support* and put this in the
+proxy host's *Advanced* config), and set `behind-proxy: true` in ntfy's
+`server.yml`:
+```nginx
+proxy_http_version 1.1;
+proxy_buffering off;
+proxy_request_buffering off;
+proxy_redirect off;
+proxy_connect_timeout 3m;
+proxy_send_timeout 3m;
+proxy_read_timeout 3m;
+client_max_body_size 0;
+```
 
 ## Forgot the PIN?
 From your already-authorised computer:

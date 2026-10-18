@@ -167,6 +167,9 @@ final class PhoneUnlock {
     }
 
     static final String NOT_NOW = "Not now. Ask again later.";
+    private static final long OPEN_TIMEOUT_MS = 10_000;
+
+    private enum StreamResult { UNLOCKED, DROPPED, BUFFERED }
     private static final int MAX_MESSAGE = 200;
 
     private final Context ctx;
@@ -245,9 +248,83 @@ final class PhoneUnlock {
                     backoff = Math.min(backoff * 2, 30_000);
                 }
             }
-            // 2. Poll both topics for replies. Polling (rather than a held-open
-            //    stream) works behind any reverse proxy; "since" makes sure
-            //    nothing sent after the notification is missed.
+            // 2. Wait for the reply on a held-open stream: instant, and only one
+            //    request per session. "since" makes sure nothing sent after the
+            //    notification is missed across reconnects. If a reverse proxy
+            //    buffers the stream (ntfy's "open" event never arrives), fall
+            //    back to polling slowly enough to stay within ntfy's rate limits.
+            long retry = 2_000;
+            while (!cancelled) {
+                StreamResult result;
+                try {
+                    result = stream();
+                } catch (Exception e) {
+                    if (cancelled) return;
+                    String problem = "can't check for reply: " + describe(e);
+                    post(() -> listener.onProblem(problem));
+                    if (!sleep(retry)) return;
+                    retry = Math.min(retry * 2, 60_000);
+                    continue;
+                }
+                if (result == StreamResult.UNLOCKED || cancelled) return;
+                if (result == StreamResult.BUFFERED) {
+                    poll();
+                    return;
+                }
+                // The stream worked and then dropped (e.g. network blip): reconnect.
+                retry = 2_000;
+                if (!sleep(retry)) return;
+            }
+        }
+
+        private StreamResult stream() throws Exception {
+            HttpURLConnection c = (HttpURLConnection) new URL(server + "/" + topic + ","
+                    + topic + "-unlock/json?since=" + since).openConnection();
+            conn = c;
+            boolean[] gotLine = {false};
+            boolean[] timedOut = {false};
+            // ntfy sends {"event":"open"} right away; if it doesn't show up, the
+            // stream is being buffered somewhere, so give up on it quickly.
+            Runnable watchdog = () -> {
+                if (!gotLine[0]) {
+                    timedOut[0] = true;
+                    new Thread(c::disconnect).start();
+                }
+            };
+            main.postDelayed(watchdog, OPEN_TIMEOUT_MS);
+            try {
+                authorize(c);
+                c.setConnectTimeout(15_000);
+                c.setReadTimeout(120_000); // ntfy sends a keepalive every 45s
+                checkOk(c);
+                BufferedReader r = new BufferedReader(
+                        new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8));
+                String line;
+                while (!cancelled && (line = r.readLine()) != null) {
+                    if (!gotLine[0]) {
+                        gotLine[0] = true;
+                        post(listener::onSent); // clears any earlier problem
+                    }
+                    if (line.trim().isEmpty()) continue;
+                    JSONObject o = new JSONObject(line);
+                    if (!"message".equals(o.optString("event"))) continue;
+                    since = o.optString("id", since);
+                    if (handle(o)) return StreamResult.UNLOCKED;
+                }
+                return StreamResult.DROPPED;
+            } catch (IOException e) {
+                if (gotLine[0]) return StreamResult.DROPPED;
+                if (timedOut[0] && !cancelled) return StreamResult.BUFFERED;
+                throw e;
+            } finally {
+                main.removeCallbacks(watchdog);
+                c.disconnect();
+                conn = null;
+            }
+        }
+
+        /** Fallback when streaming doesn't work: poll every 15s (ntfy allows ~1 request / 5s). */
+        private void poll() {
             boolean failing = false;
             while (!cancelled) {
                 try {
@@ -283,7 +360,7 @@ final class PhoneUnlock {
                     String problem = "can't check for reply: " + describe(e);
                     post(() -> listener.onProblem(problem));
                 }
-                if (!sleep(failing ? 10_000 : 3_000)) return;
+                if (!sleep(15_000)) return;
             }
         }
 
