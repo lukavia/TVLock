@@ -4,18 +4,24 @@ import android.content.Context;
 import android.graphics.PixelFormat;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.view.KeyEvent;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 
-/** Full-screen lock drawn over everything, using the blind {@link PinPadView}. */
-final class LockOverlay {
+/**
+ * Full-screen lock drawn over everything, using the blind {@link PinPadView}.
+ * While the screen is on it also offers {@link PhoneUnlock} if enabled.
+ */
+final class LockOverlay implements PhoneUnlock.Listener {
     private static final long LOCKOUT_STEP_MS = 30_000L;
 
     private final Context ctx;
     private final WindowManager wm;
+    private final PowerManager pm;
+    private final PhoneUnlock phone;
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private FrameLayout root;
@@ -23,18 +29,26 @@ final class LockOverlay {
 
     private int failures = 0;
     private long lockedUntil = 0;
+    /** Latest reply from the phone ("Not now" or a custom message), shown under the title. */
+    private String phoneNote;
+    /** Current phone unlock trouble, if any. */
+    private String phoneProblem;
+    /** Whether the notification has reached the server. */
+    private boolean phoneSent;
 
     private final Runnable ticker = this::tick;
 
     LockOverlay(Context ctx) {
         this.ctx = ctx;
         this.wm = ctx.getSystemService(WindowManager.class);
+        this.pm = ctx.getSystemService(PowerManager.class);
+        this.phone = new PhoneUnlock(ctx);
     }
 
     void show() {
         if (root != null) {
             pad.clear();
-            tick();
+            updatePhone();
             return;
         }
         root = buildView();
@@ -52,11 +66,15 @@ final class LockOverlay {
             return;
         }
         pad.clear();
-        tick();
+        updatePhone();
         root.post(() -> { if (root != null) root.requestFocus(); });
     }
 
     void hide() {
+        phone.stop();
+        phoneNote = null;
+        phoneProblem = null;
+        phoneSent = false;
         handler.removeCallbacks(ticker);
         if (root != null) {
             try { wm.removeView(root); } catch (Exception ignored) {}
@@ -87,11 +105,56 @@ final class LockOverlay {
         return frame;
     }
 
+    /**
+     * Only notify the phone while the screen is on: the lock is also put up
+     * when the TV goes to standby, and that shouldn't ping anyone.
+     */
+    private void updatePhone() {
+        if (root != null && pm.isInteractive()) {
+            phone.start(this);
+        } else {
+            phone.stop();
+            phoneNote = null; // a new request goes out next time the screen turns on
+            phoneProblem = null;
+            phoneSent = false;
+        }
+        tick();
+    }
+
+    @Override
+    public void onUnlock() {
+        unlock();
+    }
+
+    @Override
+    public void onMessage(String text) {
+        phoneNote = text;
+        tick();
+    }
+
+    @Override
+    public void onSent() {
+        phoneSent = true;
+        phoneProblem = null;
+        tick();
+    }
+
+    @Override
+    public void onProblem(String problem) {
+        phoneProblem = problem;
+        tick();
+    }
+
+    private void unlock() {
+        failures = 0;
+        lockedUntil = 0;
+        hide();
+    }
+
     private void submit(String pin) {
         if (isLockedOut()) return;
         if (Pin.check(ctx, pin)) {
-            failures = 0;
-            hide();
+            unlock();
             return;
         }
         failures++;
@@ -114,7 +177,15 @@ final class LockOverlay {
         long left = lockedUntil - SystemClock.elapsedRealtime();
         if (left <= 0) {
             pad.setInputEnabled(true);
-            pad.setMessage("Enter PIN");
+            if (phoneNote != null) {
+                pad.setMessage("From phone: " + phoneNote);
+            } else if (phoneProblem != null) {
+                pad.setMessage("Enter PIN.  (Phone unlock: " + phoneProblem + ")");
+            } else {
+                pad.setMessage(!phone.isRunning() ? "Enter PIN"
+                        : phoneSent ? "Enter PIN, or tap Unlock on your phone"
+                        : "Enter PIN  (notifying phone…)");
+            }
             return;
         }
         pad.setInputEnabled(false);
